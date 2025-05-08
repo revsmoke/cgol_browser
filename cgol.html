@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recursive Conway's Game of Life</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1, h2 {
+            color: #4ec9b0;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+        }
+        .life-instance {
+            border: 2px solid #4ec9b0;
+            border-radius: 8px;
+            padding: 15px;
+            background-color: #2a2a2a;
+            box-shadow: 0 0 15px rgba(78, 201, 176, 0.3);
+        }
+        canvas {
+            display: block;
+            margin: 10px auto;
+            border: 1px solid #555;
+            background-color: #111; /* Darker background for canvas for contrast */
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        button, select, input {
+            padding: 8px 12px;
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        button:hover, select:hover, input:hover {
+            background-color: #4f4f4f;
+        }
+        input[type="range"] {
+            padding: 0;
+            width: 100%;
+        }
+        input[type="number"] {
+            width: 60px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        .info {
+            font-size: 0.9em;
+            color: #9cdcfe;
+            text-align: center;
+            min-height: 20px;
+        }
+        .philosophy {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 15px;
+            background-color: #2a2a2a;
+            border-left: 3px solid #c586c0;
+            font-style: italic;
+        }
+        .portal-active-indicator {
+            animation: pulse 1s infinite alternate;
+        }
+        @keyframes pulse {
+            from { box-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 inset; }
+            to { box-shadow: 0 0 15px #ffaa00, 0 0 25px #ffaa00 inset; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Recursive Conway's Game of Life</h1>
+    <div class="philosophy">
+        <p>John Conway's Game of Life is a cellular automaton that, despite its simple rules, can exhibit complex, life-like behavior and is Turing complete – meaning it can perform any computation. This page demonstrates this by having a "Prime" Game of Life instance. When a specific, stable "Recursive Activator Pattern" (RAP) forms within the Prime instance, it "activates" and seeds a secondary, "Recursive" Game of Life instance. This is a conceptual representation of one computational system (CGoL Prime) controlling another (CGoL Recursive), hinting at the depth and self-referential capabilities inherent in such systems.</p>
+    </div>
+
+    <div class="container">
+        <div class="life-instance" id="primeInstanceContainer">
+            <h2>Prime CGoL Instance</h2>
+            <canvas id="primeCanvas"></canvas>
+            <div class="controls">
+                <button id="primeStartPauseBtn">Start</button>
+                <button id="primeStepBtn">Step</button>
+                <button id="primeClearBtn">Clear</button>
+                <div>
+                    <label for="primePatternSelect">Load Pattern:</label>
+                    <select id="primePatternSelect">
+                        <option value="clear">Clear</option>
+                        <option value="random">Random</option>
+                        <option value="glider">Glider</option>
+                        <option value="pulsar">Pulsar</option>
+                        <option value="gosperGliderGun">Gosper Glider Gun</option>
+                        <option value="rapActivator">RAP Activator</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="primeSpeedSlider">Speed:</label>
+                    <input type="range" id="primeSpeedSlider" min="1" max="1000" value="200">
+                </div>
+                <div>
+                    <label for="primeCellSizeInput">Cell Size (px):</label>
+                    <input type="number" id="primeCellSizeInput" value="10" min="2" max="30">
+                </div>
+                 <div>
+                    <label for="primeGridSizeInput">Grid Size (cells):</label>
+                    <input type="number" id="primeGridSizeInput" value="40" min="10" max="200">
+                </div>
+            </div>
+            <div class="info" id="primeInfo">Generation: 0 | Population: 0</div>
+        </div>
+
+        <div class="life-instance" id="recursiveInstanceContainer">
+            <h2>Recursive CGoL Instance</h2>
+            <canvas id="recursiveCanvas"></canvas>
+            <div class="info" id="recursiveInfo">Status: Dormant</div>
+            <div class="info" id="recursiveStats">Generation: 0 | Population: 0</div>
+        </div>
+    </div>
+
+    <script>
+        // --- Core CGoL Engine ---
+        function createGrid(rows, cols, initialValue = 0) {
+            const grid = [];
+            for (let r = 0; r < rows; r++) {
+                grid[r] = [];
+                for (let c = 0; c < cols; c++) {
+                    grid[r][c] = typeof initialValue === 'function' ? initialValue(r,c) : initialValue;
+                }
+            }
+            return grid;
+        }
+
+        function countLiveNeighbors(grid, r, c) {
+            let count = 0;
+            const rows = grid.length;
+            const cols = grid[0].length;
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    if (i === 0 && j === 0) continue;
+                    const nr = (r + i + rows) % rows;
+                    const nc = (c + j + cols) % cols;
+                    if (grid[nr] && grid[nr][nc]) {
+                        count += grid[nr][nc];
+                    }
+                }
+            }
+            return count;
+        }
+
+        function computeNextGeneration(grid) {
+            const rows = grid.length;
+            const cols = grid[0].length;
+            const nextGrid = createGrid(rows, cols);
+            let population = 0;
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const neighbors = countLiveNeighbors(grid, r, c);
+                    const alive = grid[r][c];
+                    if (alive) {
+                        if (neighbors < 2 || neighbors > 3) {
+                            nextGrid[r][c] = 0; // Die
+                        } else {
+                            nextGrid[r][c] = 1; // Survive
+                            population++;
+                        }
+                    } else {
+                        if (neighbors === 3) {
+                            nextGrid[r][c] = 1; // Birth
+                            population++;
+                        } else {
+                            nextGrid[r][c] = 0;
+                        }
+                    }
+                }
+            }
+            return { newGrid: nextGrid, population: population };
+        }
+
+        function drawGrid(ctx, grid, cellSize, aliveColor, deadColor, gridLineColor, highlightPattern = null, highlightColor = 'rgba(255, 255, 0, 0.5)') {
+            const rows = grid.length;
+            const cols = grid[0].length;
+            ctx.clearRect(0, 0, cols * cellSize, rows * cellSize);
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    ctx.fillStyle = grid[r][c] ? aliveColor : deadColor;
+                    ctx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
+                }
+            }
+
+            if (gridLineColor && cellSize > 3) {
+                ctx.strokeStyle = gridLineColor;
+                ctx.lineWidth = 0.5;
+                for (let r = 0; r <= rows; r++) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, r * cellSize);
+                    ctx.lineTo(cols * cellSize, r * cellSize);
+                    ctx.stroke();
+                }
+                for (let c = 0; c <= cols; c++) {
+                    ctx.beginPath();
+                    ctx.moveTo(c * cellSize, 0);
+                    ctx.lineTo(c * cellSize, rows * cellSize);
+                    ctx.stroke();
+                }
+            }
+            
+            if (highlightPattern && highlightPattern.coords) {
+                ctx.fillStyle = highlightColor;
+                const patternHeight = highlightPattern.pattern.length;
+                const patternWidth = highlightPattern.pattern[0].length;
+                for (let pr = 0; pr < patternHeight; pr++) {
+                    for (let pc = 0; pc < patternWidth; pc++) {
+                         // Only highlight if the cell in the pattern is meant to be part of it (e.g. if pattern itself has 0s)
+                        if (highlightPattern.pattern[pr][pc] === 1) {
+                           ctx.fillRect((highlightPattern.coords.c + pc) * cellSize, (highlightPattern.coords.r + pr) * cellSize, cellSize, cellSize);
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Predefined Patterns ---
+        const PREDEFINED_PATTERNS = {
+            glider: [[0,1,0],[0,0,1],[1,1,1]],
+            pulsar: [ // Partial, needs more for full pulsar
+                [0,0,1,1,1,0,0,0,1,1,1,0,0],
+                [0,0,0,0,0,0,0,0,0,0,0,0,0],
+                [1,0,0,0,0,1,0,1,0,0,0,0,1],
+                [1,0,0,0,0,1,0,1,0,0,0,0,1],
+                [1,0,0,0,0,1,0,1,0,0,0,0,1],
+                [0,0,1,1,1,0,0,0,1,1,1,0,0],
+                [0,0,0,0,0,0,0,0,0,0,0,0,0],
+                [0,0,1,1,1,0,0,0,1,1,1,0,0],
+                [1,0,0,0,0,1,0,1,0,0,0,0,1],
+                [1,0,0,0,0,1,0,1,0,0,0,0,1],
+                [1,0,0,0,0,1,0,1,0,0,0,0,1],
+                [0,0,0,0,0,0,0,0,0,0,0,0,0],
+                [0,0,1,1,1,0,0,0,1,1,1,0,0]
+            ],
+            gosperGliderGun: [
+                // Simplified to fit smaller grids, real one is larger
+                [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
+                [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0],
+                [0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
+                [0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
+                [1,1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+                [1,1,0,0,0,0,0,0,0,0,1,0,0,0,1,0,1,1,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0],
+                [0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
+                [0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+                [0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+            ],
+            rapActivator: [ // Recursive Activator Pattern - A stable 2x2 block for simplicity
+                [1,1],
+                [1,1]
+            ],
+             // A slightly more complex RAP that's an oscillator - Beacon
+            beaconRAP: [
+                [1,1,0,0],
+                [1,1,0,0],
+                [0,0,1,1],
+                [0,0,1,1]
+            ]
+        };
+        const RAP_PATTERN_TO_DETECT = PREDEFINED_PATTERNS.beaconRAP; // Using Beacon as RAP
+        const RAP_STABILITY_THRESHOLD = 5; // Needs to be stable for this many prime generations
+
+        function loadPattern(grid, patternKey, startR = 1, startC = 1) {
+            const pattern = PREDEFINED_PATTERNS[patternKey];
+            if (!pattern) return grid;
+
+            const newGrid = grid.map(row => [...row]); // Deep copy
+            for (let r = 0; r < pattern.length; r++) {
+                for (let c = 0; c < pattern[r].length; c++) {
+                    if (startR + r < newGrid.length && startC + c < newGrid[0].length) {
+                        newGrid[startR + r][startC + c] = pattern[r][c];
+                    }
+                }
+            }
+            return newGrid;
+        }
+        
+        function arraysEqual(a, b) { // Compares subgrids
+            if (a.length !== b.length) return false;
+            for (let i = 0; i < a.length; i++) {
+                if (a[i].length !== b[i].length) return false;
+                for (let j = 0; j < a[i].length; j++) {
+                    if (a[i][j] !== b[i][j]) return false;
+                }
+            }
+            return true;
+        }
+
+        // --- Prime CGoL Instance ---
+        const primeCanvas = document.getElementById('primeCanvas');
+        const primeCtx = primeCanvas.getContext('2d');
+        const primeStartPauseBtn = document.getElementById('primeStartPauseBtn');
+        const primeStepBtn = document.getElementById('primeStepBtn');
+        const primeClearBtn = document.getElementById('primeClearBtn');
+        const primePatternSelect = document.getElementById('primePatternSelect');
+        const primeSpeedSlider = document.getElementById('primeSpeedSlider');
+        const primeCellSizeInput = document.getElementById('primeCellSizeInput');
+        const primeGridSizeInput = document.getElementById('primeGridSizeInput');
+        const primeInfo = document.getElementById('primeInfo');
+        const primeInstanceContainer = document.getElementById('primeInstanceContainer');
+
+
+        let primeGrid, primeRows, primeCols, primeCellSize;
+        let primeIsRunning = false;
+        let primeAnimationId;
+        let primeSpeed = 200; // ms per frame
+        let primeGenerationCount = 0;
+        let primePopulation = 0;
+        
+        let rapState = {
+            detected: false,
+            coords: null,
+            stabilityCounter: 0,
+            lastPatternState: null // To check if the RAP itself is stable (not just present)
+        };
+        let activeRapHighlight = null; // Store coords and pattern for drawing highlight
+
+        function setupPrimeGrid() {
+            primeRows = parseInt(primeGridSizeInput.value);
+            primeCols = primeRows; // Keep it square for simplicity
+            primeCellSize = parseInt(primeCellSizeInput.value);
+            primeCanvas.width = primeCols * primeCellSize;
+            primeCanvas.height = primeRows * primeCellSize;
+            primeGrid = createGrid(primeRows, primeCols, () => (Math.random() > 0.8 ? 1 : 0)); // Default random
+            primeGenerationCount = 0;
+            primePopulation = primeGrid.flat().reduce((sum, cell) => sum + cell, 0);
+            drawPrime();
+        }
+        
+        function drawPrime() {
+            drawGrid(primeCtx, primeGrid, primeCellSize, '#4ec9b0', '#333', '#444', activeRapHighlight, 'rgba(255, 223, 0, 0.6)');
+            primeInfo.textContent = `Generation: ${primeGenerationCount} | Population: ${primePopulation}`;
+        }
+
+        function primeLoop() {
+            if (!primeIsRunning) return;
+
+            const result = computeNextGeneration(primeGrid);
+            primeGrid = result.newGrid;
+            primePopulation = result.population;
+            primeGenerationCount++;
+            
+            updateRAPState(); // Check for RAP
+            
+            drawPrime();
+
+            setTimeout(() => {
+                primeAnimationId = requestAnimationFrame(primeLoop);
+            }, primeSpeed);
+        }
+        
+        function updateRAPState() {
+            const foundRAP = detectRAP(primeGrid, RAP_PATTERN_TO_DETECT);
+            
+            if (foundRAP) {
+                const currentPatternSubgrid = extractSubgrid(primeGrid, foundRAP.r, foundRAP.c, RAP_PATTERN_TO_DETECT.length, RAP_PATTERN_TO_DETECT[0].length);
+                if (rapState.detected && rapState.coords.r === foundRAP.r && rapState.coords.c === foundRAP.c && arraysEqual(currentPatternSubgrid, rapState.lastPatternState)) {
+                    rapState.stabilityCounter++;
+                } else { // New RAP or RAP moved/changed
+                    rapState.stabilityCounter = 1;
+                }
+                rapState.detected = true;
+                rapState.coords = foundRAP;
+                rapState.lastPatternState = currentPatternSubgrid;
+
+                if (rapState.stabilityCounter >= RAP_STABILITY_THRESHOLD) {
+                    primeInstanceContainer.classList.add('portal-active-indicator');
+                    activeRapHighlight = { coords: foundRAP, pattern: RAP_PATTERN_TO_DETECT };
+                    if (!recursiveIsRunning) {
+                        activateRecursiveInstance();
+                    }
+                }
+            } else { // RAP not found
+                if (rapState.detected) { // Was just detected, now gone
+                    deactivateRecursiveInstance();
+                }
+                rapState.detected = false;
+                rapState.coords = null;
+                rapState.stabilityCounter = 0;
+                rapState.lastPatternState = null;
+                activeRapHighlight = null;
+                primeInstanceContainer.classList.remove('portal-active-indicator');
+            }
+        }
+        
+        function extractSubgrid(grid, r, c, height, width) {
+            const subgrid = [];
+            for (let i = 0; i < height; i++) {
+                subgrid[i] = [];
+                for (let j = 0; j < width; j++) {
+                    const gr = (r + i + grid.length) % grid.length;
+                    const gc = (c + j + grid[0].length) % grid[0].length;
+                    subgrid[i][j] = grid[gr][gc];
+                }
+            }
+            return subgrid;
+        }
+
+        function detectRAP(grid, patternToDetect) {
+            const gridRows = grid.length;
+            const gridCols = grid[0].length;
+            const patternHeight = patternToDetect.length;
+            const patternWidth = patternToDetect[0].length;
+
+            for (let r = 0; r < gridRows; r++) {
+                for (let c = 0; c < gridCols; c++) {
+                    let match = true;
+                    for (let pr = 0; pr < patternHeight; pr++) {
+                        for (let pc = 0; pc < patternWidth; pc++) {
+                            const gr = (r + pr + gridRows) % gridRows; // Toroidal check
+                            const gc = (c + pc + gridCols) % gridCols; // Toroidal check
+                            if (grid[gr][gc] !== patternToDetect[pr][pc]) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (!match) break;
+                    }
+                    if (match) {
+                        return { r, c }; // Return top-left coords of found RAP
+                    }
+                }
+            }
+            return null; // Not found
+        }
+
+
+        primeStartPauseBtn.addEventListener('click', () => {
+            primeIsRunning = !primeIsRunning;
+            primeStartPauseBtn.textContent = primeIsRunning ? 'Pause' : 'Start';
+            if (primeIsRunning) {
+                primeLoop();
+            } else {
+                cancelAnimationFrame(primeAnimationId);
+            }
+        });
+
+        primeStepBtn.addEventListener('click', () => {
+            if (!primeIsRunning) {
+                const result = computeNextGeneration(primeGrid);
+                primeGrid = result.newGrid;
+                primePopulation = result.population;
+                primeGenerationCount++;
+                updateRAPState();
+                drawPrime();
+            }
+        });
+        
+        primeClearBtn.addEventListener('click', () => {
+            primeGrid = createGrid(primeRows, primeCols, 0);
+            primeGenerationCount = 0;
+            primePopulation = 0;
+            if (primeIsRunning) { // Stop if running
+                 primeIsRunning = false;
+                 primeStartPauseBtn.textContent = 'Start';
+                 cancelAnimationFrame(primeAnimationId);
+            }
+            deactivateRecursiveInstance(); // Also deactivate recursive if clearing
+            updateRAPState(); // Reset RAP state
+            drawPrime();
+        });
+
+        primePatternSelect.addEventListener('change', (e) => {
+            const patternKey = e.target.value;
+            if (patternKey === "clear") {
+                 primeGrid = createGrid(primeRows, primeCols, 0);
+            } else if (patternKey === "random") {
+                 primeGrid = createGrid(primeRows, primeCols, () => (Math.random() > 0.7 ? 1 : 0));
+            } else if (patternKey === "rapActivator") { // Specific for the current RAP
+                 primeGrid = createGrid(primeRows, primeCols, 0);
+                 primeGrid = loadPattern(primeGrid, "beaconRAP", Math.floor(primeRows/2) - 2, Math.floor(primeCols/2) - 2);
+            }
+            else {
+                primeGrid = createGrid(primeRows, primeCols, 0);
+                primeGrid = loadPattern(primeGrid, patternKey, 5, 5);
+            }
+            primeGenerationCount = 0;
+            primePopulation = primeGrid.flat().reduce((sum, cell) => sum + cell, 0);
+            if (primeIsRunning) { // Stop if running
+                 primeIsRunning = false;
+                 primeStartPauseBtn.textContent = 'Start';
+                 cancelAnimationFrame(primeAnimationId);
+            }
+            updateRAPState(); // Reset RAP state as pattern changed
+            drawPrime();
+        });
+
+        primeSpeedSlider.addEventListener('input', (e) => {
+            primeSpeed = 1001 - parseInt(e.target.value); // Slider value to speed
+        });
+        
+        primeCellSizeInput.addEventListener('change', setupPrimeGrid);
+        primeGridSizeInput.addEventListener('change', setupPrimeGrid);
+
+        primeCanvas.addEventListener('click', (e) => {
+            if (primeIsRunning) return; // Don't allow editing while running
+            const rect = primeCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const c = Math.floor(x / primeCellSize);
+            const r = Math.floor(y / primeCellSize);
+            if (r >= 0 && r < primeRows && c >= 0 && c < primeCols) {
+                primeGrid[r][c] = primeGrid[r][c] ? 0 : 1;
+                primePopulation += primeGrid[r][c] ? 1 : -1;
+                drawPrime();
+            }
+        });
+
+
+        // --- Recursive CGoL Instance ---
+        const recursiveCanvas = document.getElementById('recursiveCanvas');
+        const recursiveCtx = recursiveCanvas.getContext('2d');
+        const recursiveInfo = document.getElementById('recursiveInfo');
+        const recursiveStats = document.getElementById('recursiveStats');
+
+        let recursiveGrid, recursiveRows = 30, recursiveCols = 30, recursiveCellSize = 8;
+        let recursiveIsRunning = false;
+        let recursiveAnimationId;
+        const recursiveSpeed = 100; // Fixed speed for recursive instance
+        let recursiveGenerationCount = 0;
+        let recursivePopulation = 0;
+
+        function setupRecursiveGrid() {
+            recursiveCanvas.width = recursiveCols * recursiveCellSize;
+            recursiveCanvas.height = recursiveRows * recursiveCellSize;
+            recursiveGrid = createGrid(recursiveRows, recursiveCols, 0);
+            recursiveGenerationCount = 0;
+            recursivePopulation = 0;
+            drawRecursive();
+        }
+
+        function drawRecursive() {
+            drawGrid(recursiveCtx, recursiveGrid, recursiveCellSize, '#ff6347', '#442222', '#553333'); // Tomato cells
+            recursiveStats.textContent = `Generation: ${recursiveGenerationCount} | Population: ${recursivePopulation}`;
+        }
+
+        function recursiveLoop() {
+            if (!recursiveIsRunning) return;
+            const result = computeNextGeneration(recursiveGrid);
+            recursiveGrid = result.newGrid;
+            recursivePopulation = result.population;
+            recursiveGenerationCount++;
+            drawRecursive();
+
+            setTimeout(() => {
+                recursiveAnimationId = requestAnimationFrame(recursiveLoop);
+            }, recursiveSpeed);
+        }
+        
+        function seedRecursive(patternKey) {
+            recursiveGrid = createGrid(recursiveRows, recursiveCols, 0); // Clear first
+            recursiveGrid = loadPattern(recursiveGrid, patternKey, 1, 1); // Load pattern at a fixed spot
+            recursivePopulation = recursiveGrid.flat().reduce((sum, cell) => sum + cell, 0);
+            recursiveGenerationCount = 0;
+        }
+
+        function activateRecursiveInstance() {
+            if (recursiveIsRunning) return; // Already running
+            recursiveInfo.textContent = "Status: Active - Seeded by Prime's RAP!";
+            seedRecursive("gosperGliderGun"); // Seed with a Gosper Glider Gun
+            recursiveIsRunning = true;
+            recursiveLoop();
+        }
+
+        function deactivateRecursiveInstance() {
+            if (!recursiveIsRunning && recursiveInfo.textContent === "Status: Dormant") return; // Already dormant or wasn't active
+            recursiveIsRunning = false;
+            cancelAnimationFrame(recursiveAnimationId);
+            recursiveInfo.textContent = "Status: Dormant";
+            recursiveGrid = createGrid(recursiveRows, recursiveCols, 0); // Clear it
+            recursiveGenerationCount = 0;
+            recursivePopulation = 0;
+            drawRecursive();
+        }
+
+        // --- Initial Setup ---
+        window.onload = () => {
+            setupPrimeGrid();
+            setupRecursiveGrid();
+            // Default to loading the RAP activator for demonstration
+            primePatternSelect.value = "rapActivator";
+            primePatternSelect.dispatchEvent(new Event('change'));
+        };
+
+    </script>
+</body>
+</html>
